@@ -377,6 +377,38 @@ const waitForPublishedProcessIds = (
     }
   }).pipe(Effect.timeoutOption("2 seconds"));
 
+// Records which processes the runtime's ownership observer has identified. The observer
+// records each identified descendant in its ledger in the same synchronous pass, so once
+// `awaitObserved` resumes, T3 can reap those processes even if the agent exits.
+function makeObservingLinuxProcessTreeController() {
+  const base = AcpSessionRuntime.makePosixProcessTreeController("linux");
+  const observed = new Set<number>();
+  const waiters = new Set<() => void>();
+  const controller: AcpSessionRuntime.AcpPosixProcessTreeController = {
+    ...base,
+    identity: (pid) => {
+      const identity = base.identity(pid);
+      if (identity !== undefined && !observed.has(pid)) {
+        observed.add(pid);
+        for (const wake of waiters) wake();
+      }
+      return identity;
+    },
+  };
+  const awaitObserved = (pids: ReadonlyArray<number>) =>
+    Effect.callback<void>((resume) => {
+      const check = () => {
+        if (!pids.every((pid) => observed.has(pid))) return;
+        waiters.delete(check);
+        resume(Effect.void);
+      };
+      waiters.add(check);
+      check();
+      return Effect.sync(() => waiters.delete(check));
+    });
+  return { controller, awaitObserved };
+}
+
 function makeMockRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly mockAgentPath: string;
@@ -2874,6 +2906,8 @@ describe("AcpAdapterV2", () => {
         Effect.sync(() => cleanupPublishedDetachedFixture(commandPidPath)),
       );
       const instanceId = ProviderInstanceId.make("acp-test-provider-exit");
+      const processTree = makeObservingLinuxProcessTreeController();
+      const native: { current?: AcpSessionRuntime.AcpSessionRuntime["Service"] } = {};
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         flavor: {
@@ -2886,6 +2920,11 @@ describe("AcpAdapterV2", () => {
             ownDescendantProcessGroups: true,
             ownDetachedProcessGroup: true,
             processGroupTerminationGrace: 0,
+            posixProcessTreeController: processTree.controller,
+            wrapRuntime: (runtime) => {
+              native.current = runtime;
+              return runtime;
+            },
             environment: {
               T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG: "1",
               T3_ACP_EXIT_AFTER_RUNNING_COMMAND_LAUNCH: "1",
@@ -2929,6 +2968,9 @@ describe("AcpAdapterV2", () => {
       const published = yield* waitForPublishedProcessIds(fileSystem, commandPidPath, 3);
       assert.isTrue(Option.isSome(published), "detached fixture must publish all process IDs");
       const pids = Option.getOrThrow(published);
+      yield* processTree.awaitObserved(pids);
+      if (native.current === undefined) return yield* Effect.die("Expected the native runtime");
+      yield* native.current.notify("_test/exit", { code: 0 });
       assert.isTrue(
         Option.isSome(yield* waitForProcessesToExit(pids)),
         "provider termination must reap the detached launcher, Bash, and sleep processes",
