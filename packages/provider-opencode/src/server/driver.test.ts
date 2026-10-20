@@ -65,8 +65,6 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
 
-it.layer(layer)("OpenCodeDriver 1.x workspace commands", () => {});
-
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {

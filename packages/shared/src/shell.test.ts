@@ -252,8 +252,6 @@ describe("mergePathValues", () => {
   });
 });
 
-effectIt.layer(NodeServices.layer)("isCommandAvailable", () => {});
-
 effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
   const recordProbes = (env: NodeJS.ProcessEnv) =>
     Effect.gen(function* () {
