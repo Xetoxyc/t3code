@@ -124,6 +124,77 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
+it.effect("expires credentials once their session stops showing signs of life", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-2"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: new Set(["preview"]),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("does not keep credentials of other threads alive", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-4"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["preview"]),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    timestamp += 99;
+    yield* registry.touch(ThreadId.make("thread-unrelated"));
+    timestamp += 2;
+
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("only a trusted touch restores an expired token with its original scope", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const threadId = ThreadId.make("thread-idle");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: new Set(["preview"]),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const scope = yield* registry.resolve(token);
+    expect(scope).toBeDefined();
+
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+    const otherThreadId = ThreadId.make("thread-active");
+    const other = yield* registry.issue({
+      threadId: otherThreadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["device"]),
+    });
+    yield* registry.touch(otherThreadId);
+    expect(
+      (yield* registry.resolve(other.config.authorizationHeader.replace(/^Bearer\s+/, "")))?.thread
+        .threadId,
+    ).toBe(otherThreadId);
+    expect(yield* registry.resolve("unknown-token")).toBeUndefined();
+    expect(yield* registry.resolve(token)).toBeUndefined();
+
+    yield* registry.touch(threadId);
+    expect(yield* registry.resolve(token)).toEqual(scope);
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
 it.effect.each(["provider-session", "thread", "all"] as const)(
   "never restores an expired token after %s revocation",
   (revocation) =>

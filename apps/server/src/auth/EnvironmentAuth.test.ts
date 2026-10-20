@@ -358,6 +358,25 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
+  it.effect("narrows seeded desktop grants to the requested scopes", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        "desktop-bootstrap-token",
+        ["orchestration:read"],
+        requestMetadata,
+      );
+      const session = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(token.access_token),
+      );
+
+      expect(token.scope).toBe("orchestration:read");
+      expect(session.scopes).toEqual(["orchestration:read"]);
+    }).pipe(
+      Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
+    ),
+  );
+
   it.effect("rotates desktop bearer sessions without accumulating authorized clients", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

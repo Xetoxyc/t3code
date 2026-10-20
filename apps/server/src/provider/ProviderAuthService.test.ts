@@ -477,6 +477,19 @@ describe("ProviderAuthService", () => {
     }),
   );
 
+  it.effect("lets only the flow owner cancel sign-in", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      yield* service.start({ instanceId }, owner);
+      const error = yield* Effect.flip(service.cancel({ instanceId, flowId }, otherOwner));
+      assert.strictEqual(error.operation, "cancel");
+
+      const cancelled = yield* service.cancel({ instanceId, flowId }, owner);
+      assert.strictEqual(cancelled.phase, "cancelled");
+      assert.strictEqual(cancelled.authorizationUrl, null);
+    }),
+  );
+
   it.effect.each([
     { change: "enable", initialEnabled: false, closeBeforeReplacement: true },
     { change: "config", initialEnabled: true, closeBeforeReplacement: false },

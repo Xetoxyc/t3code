@@ -234,6 +234,19 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("cancels a pending sign-in on logout without saving its eventual key", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.logout(Effect.void);
+      expect(harness.loginOptions()?.signal?.aborted).toBe(true);
+      yield* Effect.sync(() => harness.complete.resolve());
+      yield* Effect.promise(() => harness.returned.promise);
+      expect(yield* harness.auth.readApiKey).toBeUndefined();
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("retains credentials if sessions cannot be stopped for logout", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

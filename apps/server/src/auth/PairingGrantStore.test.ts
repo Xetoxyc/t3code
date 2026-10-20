@@ -1,10 +1,16 @@
 import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Queue from "effect/Queue";
+import * as TestClock from "effect/testing/TestClock";
+import {
+  DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
+  currentDesktopBootstrapToken,
+} from "@t3tools/shared/desktopBootstrapToken";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -135,6 +141,65 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
         layerPairingGrantStore({
           desktopBootstrapToken: "desktop-bootstrap-token",
         }),
+      ),
+    ),
+  );
+
+  it.effect("reports seeded desktop bootstrap credentials as expired after their ttl", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+
+      yield* TestClock.adjust(Duration.hours(12));
+      const stillValid = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
+      expect(stillValid.method).toBe("desktop-bootstrap");
+
+      yield* TestClock.adjust(Duration.hours(13));
+      const expired = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
+
+      expect(expired._tag).toBe("ExpiredBootstrapCredentialError");
+      expect(expired.message).toContain("Bootstrap credential expired");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerPairingGrantStore({
+            desktopBootstrapToken: "desktop-bootstrap-token",
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("accepts rotating desktop bootstrap tokens derived from the desktop secret", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const window = DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS;
+
+      yield* TestClock.adjust(Duration.days(5));
+      const now = 5 * 24 * 60 * 60 * 1000;
+      const current = yield* bootstrapCredentials.consume(
+        currentDesktopBootstrapToken("desktop-secret", now),
+      );
+      expect(current.method).toBe("desktop-bootstrap");
+
+      const stale = yield* Effect.flip(
+        bootstrapCredentials.consume(
+          currentDesktopBootstrapToken("desktop-secret", now - 2 * window),
+        ),
+      );
+      expect(stale._tag).toBe("UnknownBootstrapCredentialError");
+
+      const launch = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
+      expect(launch._tag).toBe("UnknownBootstrapCredentialError");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerPairingGrantStore({
+            desktopBootstrapToken: "desktop-bootstrap-token",
+            desktopBootstrapSecret: "desktop-secret",
+          }),
+          TestClock.layer(),
+        ),
       ),
     ),
   );

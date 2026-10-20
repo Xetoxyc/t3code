@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -141,6 +141,26 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);
         yield* sessions.awaitInvalidation(client.sessionId);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("expires a connected session at its credential deadline", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      yield* sessions.markConnected(client.sessionId);
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(client.sessionId)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      yield* TestClock.adjust(Duration.minutes(59));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* Fiber.join(watcher);
+      yield* sessions.awaitInvalidation(client.sessionId);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
@@ -321,6 +341,16 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       ),
     ),
   );
+
+  it.effect("rejects malformed session tokens", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const error = yield* Effect.flip(sessions.verify("not-a-session-token"));
+
+      expect(error._tag).toBe("MalformedSessionTokenError");
+      expect(error.message).toContain("Malformed session token");
+    }).pipe(Effect.provide(layerSessionStore())),
+  );
   it.effect("preserves repository failures while verifying session and websocket credentials", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -356,6 +386,20 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         cause: repositoryFailure,
       });
     }).pipe(Effect.provide(layerFailingSessionLookupCredential)),
+  );
+  it.effect("verifies session tokens against the Effect clock", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "test-clock",
+      });
+      const verified = yield* sessions.verify(issued.token);
+
+      expect(verified.method).toBe("bearer-access-token");
+      expect(verified.subject).toBe("test-clock");
+      expect(verified.scopes).toEqual(AuthStandardClientScopes);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
   it.effect("atomically replaces active sessions with the same subject and method", () =>
@@ -469,6 +513,68 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
           [previous.sessionId, unrelated.sessionId].sort(),
         );
       }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
+  );
+
+  it.effect("rejects websocket tokens once the parent session has expired", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "short-lived",
+        ttl: Duration.seconds(1),
+      });
+      const websocket = yield* sessions.issueWebSocketToken(issued.sessionId);
+
+      yield* TestClock.adjust(Duration.seconds(2));
+
+      const error = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
+      expect(error._tag).toBe("WebSocketSessionExpiredError");
+      if (error._tag === "WebSocketSessionExpiredError") {
+        expect(error.sessionId).toBe(issued.sessionId);
+        expect(error.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+        expect(error.observedAt.epochMilliseconds).toBeGreaterThan(
+          error.expiresAt.epochMilliseconds,
+        );
+      }
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("includes expiry context when session and websocket tokens expire", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "short-lived-token",
+        ttl: Duration.seconds(1),
+      });
+      const websocket = yield* sessions.issueWebSocketToken(issued.sessionId, {
+        ttl: Duration.seconds(1),
+      });
+
+      yield* TestClock.adjust(Duration.seconds(2));
+
+      const sessionError = yield* Effect.flip(sessions.verify(issued.token));
+      const websocketError = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
+
+      expect(sessionError._tag).toBe("SessionTokenExpiredError");
+      if (sessionError._tag === "SessionTokenExpiredError") {
+        expect(sessionError.sessionId).toBe(issued.sessionId);
+        expect(sessionError.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+        expect(sessionError.observedAt.epochMilliseconds).toBeGreaterThan(
+          sessionError.expiresAt.epochMilliseconds,
+        );
+      }
+      expect(websocketError._tag).toBe("WebSocketTokenExpiredError");
+      if (websocketError._tag === "WebSocketTokenExpiredError") {
+        expect(websocketError.sessionId).toBe(issued.sessionId);
+        expect(websocketError.expiresAt.epochMilliseconds).toBe(
+          websocket.expiresAt.epochMilliseconds,
+        );
+        expect(websocketError.observedAt.epochMilliseconds).toBeGreaterThan(
+          websocketError.expiresAt.epochMilliseconds,
+        );
+      }
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
   it.effect("lists active sessions, tracks connectivity, and revokes other sessions", () =>
