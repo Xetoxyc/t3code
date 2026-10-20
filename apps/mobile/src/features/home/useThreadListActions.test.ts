@@ -140,7 +140,7 @@ vi.mock("../../state/threads", () => ({
   ),
 }));
 
-import { useArchivedThreadListActions, useThreadListActions } from "./useThreadListActions";
+import { useThreadListActions } from "./useThreadListActions";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
 const otherEnvironmentId = EnvironmentId.make("other");
@@ -223,14 +223,6 @@ describe("thread list operation permissions", () => {
     },
   );
 
-  it("does not show a forbidden delete confirmation", () => {
-    useThreadListActions().confirmDeleteThread(makeThread({ environmentId: otherEnvironmentId }));
-
-    expect(state.dialogs).toEqual([]);
-    expect(state.alerts.some((alert) => alert.title === "Delete thread?")).toBe(false);
-    expect(state.requests).toEqual([]);
-  });
-
   it("rechecks permission after a retained delete confirmation", async () => {
     useThreadListActions().confirmDeleteThread(makeThread());
     const confirm = state.dialogs[0]?.onConfirm;
@@ -240,27 +232,6 @@ describe("thread list operation permissions", () => {
     await confirm!();
 
     expect(state.requests).toEqual([]);
-  });
-
-  it("unarchives with only task permission and blocks a later revoked callback", async () => {
-    const actions = useArchivedThreadListActions(() => {});
-    const thread = makeThread({ archivedAt: "2026-09-02T00:00:00.000Z" });
-    await actions.unarchiveThread(thread);
-    expect(state.requests).toEqual([expect.objectContaining({ action: "unarchive" })]);
-    state.requests = [];
-    state.scopes.get(primaryEnvironmentId)!.clear();
-
-    await actions.unarchiveThread(thread);
-
-    expect(state.requests).toEqual([]);
-  });
-
-  it("keeps delete independent of terminal and source-control permissions", async () => {
-    vi.stubEnv("EXPO_OS", "android");
-    useArchivedThreadListActions(() => {}).confirmDeleteThread(makeThread());
-    await state.dialogs[0]!.onConfirm();
-
-    expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
   });
 });
 

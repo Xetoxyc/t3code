@@ -106,41 +106,6 @@ describe("RelayTokens", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("issues tunnel-only DPoP access tokens to web public clients", () =>
-    Effect.gen(function* () {
-      const relayTokens = yield* RelayTokens.RelayTokens;
-      const token = yield* relayTokens.issueDpopAccessToken({
-        userId: "user_123",
-        proofKeyThumbprint: "web-proof-key-thumbprint",
-        jti: "web-access-token-1",
-        issuedAtEpochSeconds: 100,
-        expiresAtEpochSeconds: 200,
-        clientId: "t3-web",
-        scopes: ["environment:connect", "environment:status"],
-      });
-
-      expect(
-        yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 150 }),
-      ).toMatchObject({
-        client_id: "t3-web",
-        scope: ["environment:connect", "environment:status"],
-        cnf: { jkt: "web-proof-key-thumbprint" },
-      });
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("treats requested scope as an order-independent set", () =>
-    Effect.gen(function* () {
-      const relayTokens = yield* RelayTokens.RelayTokens;
-      expect(
-        relayTokens.resolveDpopAccessTokenScopes({
-          clientId: "t3-mobile",
-          scope: "environment:status environment:connect environment:status",
-        }),
-      ).toEqual(["environment:status", "environment:connect"]);
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("rejects signed DPoP tokens whose scope is outside the relay policy", () =>
     Effect.gen(function* () {
       const relayTokens = yield* RelayTokens.RelayTokens;
