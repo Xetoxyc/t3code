@@ -151,6 +151,9 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    close: window.close,
+    setWindowOpenHandler: webContents.setWindowOpenHandler,
+    webContentsOn: webContents.on,
     webContentsListeners,
     webContentsOnce: webContents.once,
     windowListeners,
@@ -637,6 +640,100 @@ describe("DesktopWindow", () => {
       }),
     );
   });
+
+  it("turns only same-origin pop-out frame names into thread pop-out windows", () => {
+    const applicationUrl = "t3code://app/";
+    const frameName = "t3-thread-popout:env-1:thread-1";
+    assert.isTrue(
+      DesktopWindow.isThreadPopoutWindowOpen({
+        applicationUrl,
+        url: "t3code://app/#/env-1/thread-1",
+        frameName,
+      }),
+    );
+    assert.isFalse(
+      DesktopWindow.isThreadPopoutWindowOpen({
+        applicationUrl,
+        url: "https://example.com/#/env-1/thread-1",
+        frameName,
+      }),
+    );
+    assert.isFalse(
+      DesktopWindow.isThreadPopoutWindowOpen({
+        applicationUrl,
+        url: "t3code://app/#/env-1/thread-1",
+        frameName: "",
+      }),
+    );
+  });
+
+  it.effect(
+    "opens a thread pop-out once, reveals it afterwards, and closes it with the main window",
+    () =>
+      Effect.gen(function* () {
+        const host = makeFakeBrowserWindow();
+        const popout = makeFakeBrowserWindow();
+        const openedExternalUrls: unknown[] = [];
+        const reveals = yield* Queue.unbounded<Electron.BrowserWindow>();
+        const layer = layerTest({
+          window: host.window,
+          createCount: yield* Ref.make(0),
+          mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+          openedExternalUrls,
+          onReveal: (window) => {
+            Queue.offerUnsafe(reveals, window);
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          const openHandler = host.setWindowOpenHandler.mock.calls[0]?.[0] as
+            | Parameters<Electron.WebContents["setWindowOpenHandler"]>[0]
+            | undefined;
+          if (!openHandler) return yield* Effect.die("window open handler was not registered");
+          const request = {
+            url: "t3code-dev://app/#/env-1/thread-1",
+            frameName: "t3-thread-popout:env-1:thread-1",
+            features: "popup,width=960,height=760",
+            disposition: "new-window",
+            referrer: { url: "", policy: "default" },
+          } as Electron.HandlerDetails;
+
+          const first = openHandler(request);
+          assert.equal(first.action, "allow");
+          if (first.action !== "allow") return;
+          assert.equal(first.overrideBrowserWindowOptions?.webPreferences?.sandbox, true);
+          assert.equal(first.overrideBrowserWindowOptions?.webPreferences?.webviewTag, false);
+          assert.equal(
+            first.overrideBrowserWindowOptions?.webPreferences?.preload,
+            "/repo/apps/desktop/dist-electron/preload.cjs",
+          );
+          for (const [eventName, listener] of host.webContentsOn.mock.calls) {
+            if (eventName === "did-create-window") {
+              listener(popout.window, { url: request.url, frameName: request.frameName });
+            }
+          }
+
+          assert.equal(openHandler(request).action, "deny");
+          assert.strictEqual(yield* Queue.take(reveals), popout.window);
+          assert.equal(popout.setWindowOpenHandler.mock.calls.length, 1);
+
+          assert.equal(
+            openHandler({ ...request, url: "https://example.com/#/env-1/thread-1" }).action,
+            "deny",
+          );
+          assert.deepEqual(openedExternalUrls, ["https://example.com/#/env-1/thread-1"]);
+
+          popout.isDestroyed.mockReturnValue(true);
+          assert.equal(openHandler(request).action, "allow");
+          popout.isDestroyed.mockReturnValue(false);
+
+          host.windowListeners.get("closed")?.();
+          assert.equal(popout.close.mock.calls.length, 1);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 
   it.effect("does not open a development window until the backend is ready", () =>
     Effect.gen(function* () {

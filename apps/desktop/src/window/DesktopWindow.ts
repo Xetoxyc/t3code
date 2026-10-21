@@ -8,7 +8,11 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+  THREAD_POPOUT_WINDOW_NAME_PREFIX,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -196,6 +200,25 @@ export function isSameOriginRendererNavigation(input: {
   }
 }
 
+/**
+ * A renderer `window.open` that the shell should turn into a thread pop-out
+ * window rather than hand to the system browser: the app's own origin, opened
+ * under the pop-out frame name the web client uses.
+ */
+export function isThreadPopoutWindowOpen(input: {
+  readonly applicationUrl: string;
+  readonly url: string;
+  readonly frameName: string;
+}): boolean {
+  return (
+    input.frameName.startsWith(THREAD_POPOUT_WINDOW_NAME_PREFIX) &&
+    isSameOriginRendererNavigation({
+      applicationUrl: input.applicationUrl,
+      navigationUrl: input.url,
+    })
+  );
+}
+
 export function isRetryableDevelopmentRendererLoadFailure(input: {
   readonly applicationUrl: string;
   readonly errorCode: number;
@@ -330,7 +353,24 @@ export const make = Effect.gen(function* () {
     );
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
-  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+  // Keyed by the renderer's frame name so a thread popped out twice reveals
+  // its window instead of opening another. Pop-outs close with the main
+  // window, which keeps "first window" lookups from latching onto one.
+  const threadPopoutWindows = new Map<string, Electron.BrowserWindow>();
+  const isThreadPopoutWindow = (window: Electron.BrowserWindow) => {
+    for (const popout of threadPopoutWindows.values()) {
+      if (popout === window) return true;
+    }
+    return false;
+  };
+  // Menu actions and capture events belong to the main window even while a
+  // pop-out has focus: it is the one with the sidebar and the coordinators.
+  const focusedMainWindow = Effect.gen(function* () {
+    const focused = yield* electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+    return Option.isSome(focused) && isThreadPopoutWindow(focused.value)
+      ? yield* currentMainWindow
+      : focused;
+  });
 
   const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
     window: Electron.BrowserWindow,
@@ -613,27 +653,81 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
-    window.webContents.setWindowOpenHandler(({ url }) => {
+    const openExternalOnly = (url: string) => {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
+    };
+    const keepRendererOnItsOrigin = (contents: Electron.WebContents) => {
+      contents.on("will-navigate", (event, url) => {
+        if (isSameOriginRendererNavigation({ applicationUrl, navigationUrl: url })) return;
+        event.preventDefault();
+        openExternalOnly(url);
+      });
+    };
+    const threadPopoutWindowOptions: Electron.BrowserWindowConstructorOptions = {
+      minWidth: 560,
+      minHeight: 420,
+      autoHideMenuBar: true,
+      ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
+      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      ...iconOption,
+      title: environment.displayName,
+      ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
+      webPreferences: {
+        preload: environment.preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // Preview webviews attach to the main window only.
+        webviewTag: false,
+      },
+    };
+    window.webContents.setWindowOpenHandler(({ url, frameName }) => {
+      if (isThreadPopoutWindowOpen({ applicationUrl, url, frameName })) {
+        const existing = threadPopoutWindows.get(frameName);
+        if (existing !== undefined && !existing.isDestroyed()) {
+          runFork(electronWindow.reveal(existing));
+          return { action: "deny" };
+        }
+        return { action: "allow", overrideBrowserWindowOptions: threadPopoutWindowOptions };
+      }
+      openExternalOnly(url);
       return { action: "deny" };
     });
-    window.webContents.on("will-navigate", (event, url) => {
-      if (
-        isSameOriginRendererNavigation({
-          applicationUrl,
-          navigationUrl: url,
-        })
-      ) {
-        return;
+    window.webContents.on("did-create-window", (popout, details) => {
+      if (!details.frameName.startsWith(THREAD_POPOUT_WINDOW_NAME_PREFIX)) return;
+      threadPopoutWindows.set(details.frameName, popout);
+      popout.on("closed", () => {
+        if (threadPopoutWindows.get(details.frameName) === popout) {
+          threadPopoutWindows.delete(details.frameName);
+        }
+      });
+      void runPromise(rendererHistory.register(popout.webContents, { surface: "thread-popout" }));
+      if (environment.platform === "darwin") {
+        popout.setAutoHideCursor(false);
+        popout.on("enter-full-screen", () => {
+          popout.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
+        });
+        popout.on("leave-full-screen", () => {
+          popout.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
+        });
       }
-
-      event.preventDefault();
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
-        void runPromise(electronShell.openExternal(url));
-      }
+      // The renderer titles a pop-out after its thread; nothing overrides it.
+      popout.webContents.setWindowOpenHandler(({ url }) => {
+        openExternalOnly(url);
+        return { action: "deny" };
+      });
+      keepRendererOnItsOrigin(popout.webContents);
+      // The title bar overlay was computed when the main window opened; the
+      // theme may have changed since.
+      runFork(
+        electronTheme.shouldUseDarkColors.pipe(
+          Effect.flatMap((dark) => syncWindowAppearance(popout, dark, environment.platform)),
+        ),
+      );
     });
+    keepRendererOnItsOrigin(window.webContents);
 
     // Electron's windowMenu close role owns CmdOrCtrl+W. Holding the
     // close-terminal shortcut can outlive the terminal that handled its first
@@ -845,6 +939,10 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      for (const popout of threadPopoutWindows.values()) {
+        if (!popout.isDestroyed()) popout.close();
+      }
+      threadPopoutWindows.clear();
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 

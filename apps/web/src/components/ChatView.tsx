@@ -176,6 +176,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
+import { isThreadPopoutWindow, openThreadPopout } from "../threadPopout";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { useActiveThreadRef } from "../hooks/useActiveThreadRef";
@@ -5801,6 +5802,10 @@ export default function ChatView(props: ChatViewProps) {
         }
         if (settleAndAdvance(activeThreadRef)) return;
         void settleThread(activeThreadRef).then(toastPinFailure("Failed to settle thread"));
+      },
+      "thread.popOut": ({ event }) => {
+        if (!isServerThread || !activeThreadRef || isThreadPopoutWindow) return false;
+        if (!event.repeat) openThreadPopout(router, activeThreadRef);
       },
       "thread.pin": () => {
         if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;

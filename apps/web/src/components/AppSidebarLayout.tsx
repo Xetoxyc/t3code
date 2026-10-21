@@ -10,6 +10,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
+import { isThreadPopoutWindow } from "../threadPopout";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
@@ -314,6 +315,25 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       unsubscribe?.();
     };
   }, [navigate, pathname]);
+
+  // A pop-out keeps the provider so thread views lay out as they do beside a
+  // collapsed sidebar, but mounts neither the sidebar nor its toggle.
+  if (isThreadPopoutWindow) {
+    return (
+      <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
+        <SidebarProvider
+          className="h-dvh! min-h-0!"
+          data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
+          defaultOpen={false}
+          style={sidebarProviderStyle}
+        >
+          <ProjectProjectionRetention />
+          {children}
+          <NavigationHistoryShortcuts />
+        </SidebarProvider>
+      </PanelAnimationSuppressionProvider>
+    );
+  }
 
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>

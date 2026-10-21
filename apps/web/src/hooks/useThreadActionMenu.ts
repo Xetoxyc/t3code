@@ -35,6 +35,7 @@ import {
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
+import { isThreadPopoutWindow, openThreadPopout } from "../threadPopout";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -138,6 +139,7 @@ export function useThreadActionMenu(input: {
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
         isRegeneratingTitle,
+        canPopOut: !isThreadPopoutWindow,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
         snoozePresets,
@@ -206,6 +208,9 @@ export function useThreadActionMenu(input: {
           }
           return;
         }
+        case "pop-out":
+          openThreadPopout(router, threadRef);
+          return;
         case "settle":
           await reportFailure("Failed to settle thread", () => settleThread(threadRef));
           return;

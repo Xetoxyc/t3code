@@ -21,6 +21,14 @@ import type {
   DesktopAppActivationResponse,
 } from "./desktopAppActivation.ts";
 
+/**
+ * `window.name` prefix of a window opened by "Pop out thread". The renderer
+ * reads it to drop the sidebar; the desktop main process reads the same
+ * prefix from `window.open`'s frame name to allow the window instead of
+ * handing the URL to the system browser.
+ */
+export const THREAD_POPOUT_WINDOW_NAME_PREFIX = "t3-thread-popout:";
+
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;

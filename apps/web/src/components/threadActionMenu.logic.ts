@@ -15,6 +15,7 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "pop-out"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -76,6 +77,8 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
+  /** A pop-out window hides the action: it already is one, and the desktop shell only opens pop-outs from the main window. */
+  readonly canPopOut: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
   readonly supports: {
@@ -93,6 +96,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   return ![
     "new-thread-on-branch",
     "project-settings",
+    "pop-out",
     "mark-unread",
     "copy",
     "copy-path",
@@ -147,7 +151,17 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
+    ...(state.canPopOut
+      ? [
+          {
+            id: "pop-out" as const,
+            label: "Pop out thread",
+            icon: "square-arrow-out-up-right",
+            separatorBefore: true,
+          },
+        ]
+      : []),
+    { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: !state.canPopOut },
     ...(state.supports.titleRegeneration
       ? [
           {

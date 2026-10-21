@@ -10,13 +10,14 @@ import { vi } from "vite-plus/test";
 
 import type * as Electron from "electron";
 
-const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+const { focusedWebContents, ownerWindow, allWindows } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
   ownerWindow: vi.fn(),
+  allWindows: vi.fn((): Electron.BrowserWindow[] => []),
 }));
 vi.mock("electron", () => ({
   webContents: { getFocusedWebContents: focusedWebContents },
-  BrowserWindow: { fromWebContents: ownerWindow },
+  BrowserWindow: { fromWebContents: ownerWindow, getAllWindows: allWindows },
 }));
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
@@ -230,6 +231,28 @@ describe("getWindowFullscreenState", () => {
           currentMainOrFirst: Effect.succeedSome(window),
         }),
       ),
+    );
+  });
+
+  it.effect("answers for the asking window, falling back to main for unknown senders", () => {
+    const main = { webContents: { id: 1 }, isFullScreen: () => true } as Electron.BrowserWindow;
+    const popout = { webContents: { id: 2 }, isFullScreen: () => false } as Electron.BrowserWindow;
+    allWindows.mockReturnValue([main, popout]);
+
+    return Effect.gen(function* () {
+      assert.isFalse(
+        yield* getWindowFullscreenState.handler({ returnValue: null, sender: { id: 2 } }),
+      );
+      assert.isTrue(
+        yield* getWindowFullscreenState.handler({ returnValue: null, sender: { id: 9 } }),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          currentMainOrFirst: Effect.succeedSome(main),
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => allWindows.mockReturnValue([]))),
     );
   });
 });

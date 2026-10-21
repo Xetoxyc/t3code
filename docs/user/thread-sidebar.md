@@ -191,6 +191,18 @@ and copying a thread reference. A copied reference uses the thread's pull reques
 link when available, otherwise its thread ID. See [keybindings](./keybindings.md)
 for custom configuration.
 
+## Pop out a thread
+
+On web and desktop, choose **Pop out thread** from a thread's menu, or from the command
+palette, to open that thread in its own window without the sidebar. Use it to keep one
+conversation in view while you work in another thread, or to place a thread on a second
+display. The window stays live and takes messages like the main window does. Choosing
+**Pop out thread** again for the same thread brings its window to the front.
+
+A pop-out shows the thread and its panels, but not the in-app browser preview; open the
+preview from the main window. Closing the main desktop window closes its pop-outs. The
+`thread.popOut` command has no default shortcut; assign one in **Settings → Keybindings**.
+
 ## Inspect agent work
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation

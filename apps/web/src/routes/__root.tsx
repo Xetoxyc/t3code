@@ -55,6 +55,9 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { isElectron } from "../env";
+import { isThreadPopoutWindow } from "../threadPopout";
+import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
+import { useQuietThreadShell } from "../state/entities";
 import { cn } from "../lib/utils";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
@@ -216,6 +219,32 @@ function RootRouteView() {
     </CommandPalette>
   );
 
+  // The main window owns onboarding, notifications, desktop activation, web
+  // links, and the other per-app coordinators; a second window running them
+  // would act on the same events twice. A pop-out mounts only what one thread
+  // view needs.
+  if (isThreadPopoutWindow) {
+    return (
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <DocumentTitleSync />
+          <BrowserChromeThemeSync key={pathname} />
+          <ContrastAppearanceSync />
+          <EnvironmentThemeSync />
+          <GlassAppearanceSync />
+          <FontAppearanceSync />
+          <ConfirmDialogHost />
+          <CustomSnoozeDialogHost />
+          <SlowRpcRequestToastCoordinator />
+          <HostFreezeToastCoordinator />
+          <PermissionUpdateNotice />
+          <HostedStaticEnvironmentBootstrap />
+          {appShell}
+        </AnchoredToastProvider>
+      </ToastProvider>
+    );
+  }
+
   return (
     <ToastProvider>
       <AnchoredToastProvider>
@@ -358,12 +387,16 @@ function BrowserChromeThemeSync() {
 function DocumentTitleSync() {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-  const title = resolveServerBackedAppDisplayName({
+  const appTitle = resolveServerBackedAppDisplayName({
     baseName: APP_BASE_NAME,
     fallbackDisplayName: APP_DISPLAY_NAME,
     fallbackStageLabel: APP_STAGE_LABEL,
     primaryServerVersion,
   });
+  // A pop-out is one thread's window, so its title bar and task switcher entry name the thread.
+  const routeThreadRef = useThreadRouteRef();
+  const popoutThread = useQuietThreadShell(isThreadPopoutWindow ? routeThreadRef : null);
+  const title = popoutThread ? `${popoutThread.title} – ${appTitle}` : appTitle;
 
   useEffect(() => {
     document.title = title;

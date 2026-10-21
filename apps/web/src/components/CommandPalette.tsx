@@ -55,7 +55,7 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -74,6 +74,7 @@ import {
   PaletteIcon,
   RotateCcwIcon,
   SettingsIcon,
+  SquareArrowOutUpRightIcon,
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
@@ -166,6 +167,7 @@ import {
 } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { isThreadPopoutWindow, openThreadPopout } from "../threadPopout";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
   applyWslEnvironmentConfiguration,
@@ -716,6 +718,7 @@ function OpenCommandPaletteDialog(props: {
   readonly clearOpenIntent: () => void;
 }) {
   const navigate = useNavigate();
+  const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openChildSearch, setOpen } = props;
   const initialSearch = props.initialContext ?? {
@@ -1697,6 +1700,21 @@ function OpenCommandPaletteDialog(props: {
         });
       }
     }
+  }
+
+  if (activeThread !== null && !isThreadPopoutWindow) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:pop-out-thread",
+      searchTerms: ["pop out", "popout", "window", "detach", "open in new window"],
+      title: "Pop out thread",
+      icon: <SquareArrowOutUpRightIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "thread.popOut",
+      run: async () => {
+        openThreadPopout(router, threadRef);
+      },
+    });
   }
 
   if (activeThreadReferenceCopyTarget !== null) {

@@ -112,6 +112,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../env";
+import { isThreadPopoutWindow, openThreadPopout } from "../threadPopout";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -4258,6 +4259,7 @@ export default function Sidebar() {
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
+              canPopOut: !isThreadPopoutWindow,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               supports: {
                 settlement: supportsSettlement,
@@ -4375,6 +4377,9 @@ export default function Sidebar() {
           }
           case "mark-unread":
             markThreadUnread(threadRef);
+            return;
+          case "pop-out":
+            openThreadPopout(router, threadRef);
             return;
           case "copy-path":
             if (!threadWorkspacePath) {

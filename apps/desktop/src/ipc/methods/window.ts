@@ -92,7 +92,15 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
 export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL,
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.getWindowFullscreenState")(function* () {
+  handler: Effect.fn("desktop.ipc.window.getWindowFullscreenState")(function* (event) {
+    // A thread pop-out asks about its own window, which can differ from the main one.
+    const senderWindow =
+      event === undefined
+        ? undefined
+        : Electron.BrowserWindow.getAllWindows().find(
+            (candidate) => candidate.webContents.id === event.sender?.id,
+          );
+    if (senderWindow !== undefined) return senderWindow.isFullScreen();
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
     return Option.isSome(window) && window.value.isFullScreen();

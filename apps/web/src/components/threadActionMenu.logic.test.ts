@@ -16,6 +16,7 @@ const baseState: ThreadActionMenuState = {
   isSnoozed: false,
   canSnoozeNow: true,
   isRegeneratingTitle: false,
+  canPopOut: true,
   isRunning: false,
   supports: {
     settlement: true,
@@ -83,6 +84,7 @@ describe("buildThreadActionMenuItems", () => {
     const denied = buildThreadActionMenuItems({ ...baseState, canOperate: false, branch: "main" });
     expect(denied.filter((item) => !item.disabled).map((item) => item.id)).toEqual([
       "new-thread-on-branch",
+      "pop-out",
       "mark-unread",
       "copy",
       "project-settings",
@@ -103,7 +105,15 @@ describe("buildThreadActionMenuItems", () => {
           titleRegeneration: false,
         },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "pop-out",
+      "rename",
+      "mark-unread",
+      "copy",
+      "project-settings",
+      "archive",
+      "delete",
+    ]);
   });
 
   it("groups project settings with utility actions before archive", () => {
@@ -220,6 +230,16 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+
+  it("hides pop-out inside a pop-out window without losing the rename separator", () => {
+    const withPopOut = buildThreadActionMenuItems(baseState);
+    expect(withPopOut.find((item) => item.id === "pop-out")?.separatorBefore).toBe(true);
+    expect(withPopOut.find((item) => item.id === "rename")?.separatorBefore).toBeFalsy();
+
+    const withoutPopOut = buildThreadActionMenuItems({ ...baseState, canPopOut: false });
+    expect(ids({ ...baseState, canPopOut: false })).not.toContain("pop-out");
+    expect(withoutPopOut.find((item) => item.id === "rename")?.separatorBefore).toBe(true);
   });
 });
 
